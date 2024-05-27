@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -225,10 +227,34 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			}
 			defer clientConn.Close()
 
-			clientHello, err := sniffer.ReadClientHello()
-			if err != nil {
-				ctx.Warnf("Cannot read client hello %s", err)
-				return
+			var clientHello []byte
+			if p, ok := os.LookupEnv("GOPROXY_OVERWRITE_CLIENT_HELLO"); ok {
+				ch, err := os.ReadFile(p)
+				if err != nil {
+					ctx.Warnf("cannot read client hello from file: %s", err)
+					return
+				}
+				clientHello = ch
+				fmt.Println("overwrote client hello UwU")
+			} else {
+				ch, err := sniffer.ReadClientHello()
+				if err != nil {
+					ctx.Warnf("cannot read client hello from network: %s", err)
+					return
+				}
+				clientHello = ch
+			}
+
+			ts := strconv.FormatInt(time.Now().UnixMilli(), 10)
+			if dir, ok := os.LookupEnv("GOPROXY_CLIENT_HELLO_SAVE_DIR"); ok {
+				os.Mkdir(dir, 0755) // create dir, ignore error
+				clientHelloPath := path.Join(dir, ts+".bin")
+				if err := os.WriteFile(clientHelloPath, clientHello, 0660); err != nil {
+					ctx.Warnf("error writing client hello: %s", err)
+					return
+				}
+				ctx.Logf("Wrote client hello to %s", clientHelloPath)
+				fmt.Printf("Wrote client hello to %s\n", clientHelloPath)
 			}
 
 			clientHelloSpec, err := utlsFingerprinter.FingerprintClientHello(clientHello)
